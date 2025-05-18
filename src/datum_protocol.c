@@ -119,6 +119,7 @@ uint64_t datum_last_accepted_share_local_tsms = 0;
 uint64_t datum_protocol_mainloop_tsms = 0;
 
 uint64_t latest_server_msg_tsms = 0;
+uint64_t datum_pool_connect_tsms = 0;
 
 // may be used by this thread when crafting replies to server commands
 unsigned char temp_data[DATUM_PROTOCOL_MAX_CMD_DATA_SIZE + 16384];
@@ -444,6 +445,8 @@ err:
 	DLOG_DEBUG("DATUM Pool Min Diff:         %"PRIu64,datum_config.override_vardiff_min);
 	
 	datum_state = 3; // fully ready to make work
+        datum_pool_connect_tsms = current_time_millis();
+        datum_blocktemplates_notifynew(NULL, 0);
 	
 	return 1;
 }

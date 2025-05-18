@@ -168,5 +168,7 @@ extern uint64_t datum_rejected_share_diff;
 #define DATUM_POW_SHARE_RESPONSE_ACCEPTED 0x50
 #define DATUM_POW_SHARE_RESPONSE_ACCEPTED_TENTATIVELY 0x55
 #define DATUM_POW_SHARE_RESPONSE_REJECTED 0x66
+extern uint64_t datum_pool_connect_tsms;
+
 
 #endif

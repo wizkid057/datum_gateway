@@ -1001,8 +1001,8 @@ int client_mining_submit(T_DATUM_CLIENT_DATA *c, uint64_t id, json_t *params_obj
 		return 0;
 	}
 	
-	// construct block header
-	bver = job->version_uint;
+        // construct block header
+        bver = job->version_uint;
 	if (m->extension_version_rolling) {
 		vroll = json_array_get(params_obj, 5);
 		if (!vroll) {
@@ -1280,13 +1280,19 @@ int client_mining_submit(T_DATUM_CLIENT_DATA *c, uint64_t id, json_t *params_obj
 		return 0;
 	}
 	
-	// work accepted
-	if (!was_block) {
-		if (job->is_datum_job) {
-			// submit via DATUM
-			datum_protocol_pow_submit(c, job, username_s, was_block, empty_work, quickdiff, block_header, quickdiff?m->quickdiff_value:m->stratum_job_diffs[g_job_index], full_cb_txn, cb, extranonce_bin, coinbase_index);
-		}
-	}
+        // work accepted
+        if (!was_block) {
+                if (job->is_datum_job) {
+                        if (datum_protocol_is_active() && datum_pool_connect_tsms && job->tsms < datum_pool_connect_tsms) {
+                                send_rejected_stale(c, id);
+                                m->share_count_rejected++;
+                                m->share_diff_rejected+=m->stratum_job_diffs[g_job_index];
+                                return 0;
+                        }
+                        // submit via DATUM
+                        datum_protocol_pow_submit(c, job, username_s, was_block, empty_work, quickdiff, block_header, quickdiff?m->quickdiff_value:m->stratum_job_diffs[g_job_index], full_cb_txn, cb, extranonce_bin, coinbase_index);
+                }
+        }
 	
 	char s[256];
 	snprintf(s, sizeof(s), "{\"error\":null,\"id\":%"PRIu64",\"result\":true}\n", id);
