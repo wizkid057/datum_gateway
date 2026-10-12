@@ -33,6 +33,7 @@
  *
  */
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -117,7 +118,81 @@ void datum_utils_tests_secure_strequals(void) {
 	datum_test(datum_secure_strequals(NULL, 0, ""));
 }
 
+void datum_utils_tests_nbits_to_target_(const uint32_t nbits, const bool expect_ok, const uint8_t * const expected, const unsigned int line) {
+	static const uint8_t zero[32] = { 0 };
+	uint8_t target[32];
+	
+	memset(target, 0xaa, sizeof(target));
+	datum_test_(nbits_to_target(nbits, target) == expect_ok, "nbits_to_target(nbits, target) == expect_ok", line, __func__);
+	datum_test_(memcmp(target, expect_ok ? expected : zero, sizeof(target)) == 0, "memcmp(target, expected, 32) == 0", line, __func__);
+}
+#define nbits_ok(nbits, ...)  datum_utils_tests_nbits_to_target_(nbits, true, (const uint8_t[32]){ __VA_ARGS__ }, __LINE__)
+#define nbits_bad(nbits)  datum_utils_tests_nbits_to_target_(nbits, false, NULL, __LINE__)
+
+void datum_utils_tests_nbits_to_target(void) {
+	// Target bytes are little-endian.
+	
+	/* zero mantissa */
+	nbits_bad(0x00000000);
+	nbits_bad(0x03000000);
+	nbits_bad(0x1d000000);
+	nbits_bad(0x20000000);
+	
+	/* negative (sign bit set) */
+	nbits_bad(0x03800000);
+	nbits_bad(0x04800000);
+	nbits_bad(0x1d800001);
+	nbits_bad(0x1dffffff);
+	nbits_bad(0x20800000);
+	
+	/* small exponents: shift truncates the value to zero */
+	nbits_bad(0x007fffff);
+	nbits_bad(0x0100ffff);
+	nbits_bad(0x01000001);
+	nbits_bad(0x020000ff);
+	nbits_bad(0x02000001);
+	
+	/* small exponents: shift leaves a nonzero value */
+	nbits_ok(0x01010000, [0] = 0x01);
+	nbits_ok(0x01123456, [0] = 0x12);
+	nbits_ok(0x02000100, [0] = 0x01);
+	nbits_ok(0x02008000, [0] = 0x80);
+	nbits_ok(0x02123456, [0] = 0x34, [1] = 0x12);
+	nbits_ok(0x03000001, [0] = 0x01);
+	nbits_ok(0x03123456, [0] = 0x56, [1] = 0x34, [2] = 0x12);
+	nbits_ok(0x04123456, [1] = 0x56, [2] = 0x34, [3] = 0x12);
+	
+	/* typical value (genesis block) */
+	nbits_ok(0x1d00ffff, [26] = 0xff, [27] = 0xff);
+	
+	/* exponent 32: any non-negative mantissa fits */
+	nbits_ok(0x20000001, [29] = 0x01);
+	nbits_ok(0x20010000, [31] = 0x01);
+	nbits_ok(0x207fffff, [29] = 0xff, [30] = 0xff, [31] = 0x7f);
+	
+	/* exponent 33: mantissa must fit in 2 bytes */
+	nbits_ok(0x21000001, [30] = 0x01);
+	nbits_ok(0x2100ffff, [30] = 0xff, [31] = 0xff);
+	nbits_bad(0x21010000);
+	nbits_bad(0x217fffff);
+	
+	/* exponent 34: mantissa must fit in 1 byte */
+	nbits_ok(0x22000001, [31] = 0x01);
+	nbits_ok(0x220000ff, [31] = 0xff);
+	nbits_bad(0x22000100);
+	nbits_bad(0x22010000);
+	
+	/* exponent 35 and above: always overflows */
+	nbits_bad(0x23000001);
+	nbits_bad(0x230000ff);
+	nbits_bad(0xff000001);
+}
+
+#undef nbits_ok
+#undef nbits_bad
+
 void datum_utils_tests(void) {
 	datum_utils_tests_hex();
 	datum_utils_tests_secure_strequals();
+	datum_utils_tests_nbits_to_target();
 }
