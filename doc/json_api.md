@@ -230,7 +230,7 @@ HTTP Digest authentication is required for both `GET` and `POST` requests. Confi
 The `GET` response reports whether an RPC password is set through `rpcpassword_set` and omits the password itself. A successful `POST` response echoes the submitted JSON fields, including `rpcpassword` if supplied. Do not log or share unredacted configuration request or response bodies; remove passwords and other sensitive fields first.
 
 A `POST` request must additionally send the anti-CSRF token in an `X-DATUM-CSRF` header and use a `Content-Type` of `application/json`.
-The token is returned by the `GET` method below (as `csrf_token`), and stays the same as long as `api.admin_password` and `api.listen_port` do.
+The token is returned by the `GET` method below (as `csrf_token`). It is generated randomly at Gateway startup, independently of `api.admin_password` and `api.listen_port`, and changes on each restart. After a restart, fetch the new token with `GET /v1/configuration` before sending further `POST` requests.
 
 `GET` method
 

@@ -309,7 +309,7 @@ Expect an `OK` response. This verifies that the notification reached the Gateway
 Run the `datum_gateway` executable with the `-?` flag for detailed configuration information, descriptions, and required options. Then construct a configuration file (defaults to `datum_gateway_config.json` in the current working directory). Be sure to also set your coinbase tags. The primary tag setting is unused in pooled mining; however, the secondary tag is intended to show on things like block explorers when you mine a block.
 
 There is an [example configuration file included in the doc/ directory](example_datum_gateway_config.json) you may wish to use as a template.
-Note that the API/web admin password is also used for preventing CSRF attacks, so it is crucial you set it to something reasonably secure (or disable the API/web interface entirely).
+Set a secure `api.admin_password` to protect administrative actions, or disable the API/web interface entirely.
 
 You should review the [documentation on usernames](usernames.md) next.
 Once you have everything running, you can point miners at the Gateway.
