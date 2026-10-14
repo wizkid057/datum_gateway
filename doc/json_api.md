@@ -1,19 +1,46 @@
 # Documentation for the DATUM Gateway JSON API
 
+## Access and authentication
+
+The JSON API uses the dashboard's `api.listen_addr` and `api.listen_port`. It requires a build with API support, a nonzero listen port, and `api.json_api: true`. Examples below use port `7152`; replace the address and port to match your Gateway.
+
+The statistics endpoints are readable without authentication, except `/v1/stratum_client_list`. That endpoint and `/v1/configuration` require a configured `api.admin_password` and HTTP Digest authentication. Use username `admin` and the configured password:
+
+```bash
+curl --fail --silent --show-error --digest --user admin \
+  http://YOUR_GATEWAY_LAN_IP:7152/v1/stratum_client_list
+```
+
+`curl` prompts for the password, so it need not appear in the command or shell history. The same authentication options work for a `GET` of `/v1/configuration`. HTTP Digest authentication does not encrypt request or response bodies; fields such as `rpcpassword` sent in a JSON body remain visible over plain HTTP. Keep the API on a trusted network or access it through a private VPN. See [RFC 7616, section 5.3](https://www.rfc-editor.org/rfc/rfc7616.html#section-5.3).
+
+Check response bodies for an `error` field as well as checking HTTP status. Some errors, including a missing current job or an unset admin password, are returned as JSON with HTTP status `200`.
+
 ## Decentralized client stats:
 
 Endpoint: `/v1/decentralized_client_stats`
 
+These counters describe responses from the DATUM pool, not local Stratum acceptance or wallet payouts. They accumulate for the lifetime of the Gateway process and reset on restart; a pool reconnect alone does not reset them. Treat a counter decrease or a process restart as a new measurement interval when calculating rates.
+
+| Field | Meaning / unit |
+| --- | --- |
+| `acceptedShares`, `rejectedShares` | Counts of shares accepted or rejected by the pool. |
+| `acceptedSharesDiff`, `rejectedSharesDiff` | Cumulative share difficulty accounted for by those responses, not share counts. |
+| `poolMinDiff` | The pool's minimum share difficulty. |
+| `poolHost` | Configured host and port, or `N/A` when no pool is configured. |
+| `uptime` | Seconds since Gateway process startup. |
+
+`ready` is `Ready` for active pooled mining, `Non-Pooled Mode and Ready` for ready non-pooled operation, or a status such as `Not Ready`, `Waiting for block template to be initialized`, or `Block template error`.
+
 Result:
 
-```
+```json
 {
   "acceptedShares": 0,
   "acceptedSharesDiff": 0,
   "rejectedShares": 0,
   "rejectedSharesDiff": 0,
   "ready": "Ready",
-  "poolHost": "datum-beta1.mine.ocean.xyz",
+  "poolHost": "datum-beta1.mine.ocean.xyz:28915",
   "poolTag": "DATUM Gateway",
   "minerTag": "DATUM User",
   "poolMinDiff": 0,
@@ -26,7 +53,9 @@ Result:
 
 Endpoint: `/v1/stratum_server_info`
 
-```
+`activeThread` is the number of active Stratum threads. `totalConnections` and `totalWorkSubscriptions` are current counts, not cumulative totals. `estimatedHashrate` is the aggregate share-based estimate in **TH/s** (`1 TH/s = 10^12 hashes/second`); estimates older than 180 seconds are excluded.
+
+```json
 {
   "activeThread": 0,
   "totalConnections": 0,
@@ -39,7 +68,19 @@ Endpoint: `/v1/stratum_server_info`
 
 Endpoint: `/v1/current_stratum_job`
 
-```
+| Field | Meaning / unit |
+| --- | --- |
+| `block_height` | Height of the candidate block (normally the node's tip height plus one). |
+| `block_value` | Available coinbase reward, in satoshis. |
+| `time.current`, `time.minimum` | Unix timestamps in seconds, from the node's template. |
+| `size`, `limits.size` | Bytes. |
+| `weight`, `limits.weight` | Bitcoin weight units. |
+| `sigops`, `limits.sigops` | Signature-operation cost units as reported by the template. |
+| `tx_count` | Number of ordinary transactions in the template. |
+
+The `size`, `weight`, `sigops`, and `tx_count` totals describe the template's ordinary transactions, excluding the Gateway's coinbase transaction. They are not final assembled-block totals. The `limits` object contains the node's template limits. If no job is available, the response contains an `error` instead of these fields.
+
+```json
 {
   "block_height": 939444,
   "block_value": 313097029,
@@ -72,7 +113,9 @@ Endpoint: `/v1/current_stratum_job`
 
 Endpoint: `/v1/coinbaser`
 
-```
+Output values are in **satoshis**. This is a view of outputs available for the current job, not a wallet balance or a history of payments.
+
+```json
 {
   "OP_RETURN": 0,
   "bc1qztuue9qkmj48zhwxww6rzqm3caz7xtg7kudnv2": 75716361,
@@ -95,7 +138,9 @@ Endpoint: `/v1/coinbaser`
 
 Endpoint: `/v1/thread_stats`
 
-```
+Object keys identify Stratum threads. `connection_count` and `subscription_count` are current client counts. `approx_hashrate` is a share-based estimate in **TH/s**, excluding estimates older than 180 seconds.
+
+```json
 {
   "0": {
     "connection_count": 1,
@@ -114,9 +159,22 @@ Endpoint: `/v1/thread_stats`
 
 Endpoint: `/v1/stratum_client_list`
 
-HTTP auth is required.
+HTTP Digest authentication is required; see the [request example](#access-and-authentication).
 
-```
+The outer object is keyed by thread ID, then client slot. Slots may be reused after disconnects. Share counters belong to the current client connection and reset when that client reconnects; they record local Gateway acceptance, independently of the pool counters above. An unsubscribed client has only its connection details and `subscribed: false`.
+
+| Field | Meaning / unit |
+| --- | --- |
+| `sid_time` | Seconds since the client subscribed. |
+| `last_share` | Seconds since its last accepted share, or `-1` if none. |
+| `vdiff` | Current client share difficulty. |
+| `accepted_count`, `rejected_count` | Share counts for this connection. |
+| `accepted_diff`, `rejected_diff` | Cumulative accepted or rejected share difficulty for this connection. |
+| `rejected_percentage` | Rejected difficulty as a percentage of total submitted difficulty; currently `0` until some work has been accepted. |
+| `hash_rate` | Share-based estimate in **TH/s**, encoded as a string, or `N/A` before any accepted work. |
+| `hash_rate_age` | Seconds since the sample used for the estimate, or `-1` before any accepted work. |
+
+```json
 {
   "0": {
     "0": {
@@ -125,15 +183,15 @@ HTTP auth is required.
       "subscribed": true,
       "sid": "b10cf00d",
       "sid_time": 73.42,
-      "last_share": -1.0, // return -1 if no share has ever been sent
+      "last_share": -1.0,
       "vdiff": 131072,
       "accepted_diff": 0,
       "accepted_count": 0,
       "rejected_diff": 0,
       "rejected_count": 0,
       "rejected_percentage": 0.0,
-      "hash_rate": "313.37", // return N/A if no share has ever been sent
-      "hash_rate_age": 2.5, // return -1 if no share has ever been sent
+      "hash_rate": "N/A",
+      "hash_rate_age": -1.0,
       "coinbase": "Respect",
       "useragent": ""
     }
@@ -145,15 +203,15 @@ HTTP auth is required.
       "subscribed": true,
       "sid": "b14cf00d",
       "sid_time": 67.77,
-      "last_share": 2.5, // return -1 if no share has ever been sent
+      "last_share": 2.5,
       "vdiff": 131072,
-      "accepted_diff": 0,
-      "accepted_count": 0,
+      "accepted_diff": 1310720,
+      "accepted_count": 10,
       "rejected_diff": 0,
       "rejected_count": 0,
       "rejected_percentage": 0.0,
-      "hash_rate": "313.37", // return "N/A" if no share has ever been sent
-      "hash_rate_age": 2.5, // return -1 if no share has ever been sent
+      "hash_rate": "313.37",
+      "hash_rate_age": 2.5,
       "coinbase": "Respect",
       "useragent": "bitaxe/BM1366/v2.13.0"
     }
@@ -165,14 +223,18 @@ HTTP auth is required.
 
 Endpoint: `/v1/configuration`
 
-HTTP auth is required for both `GET` and `POST` request.
+HTTP Digest authentication is required for both `GET` and `POST` requests. Configuration changes also require `api.modify_conf: true`.
 
-A `POST` request must additionally send the anti-CSRF token in a `X-DATUM-CSRF` header, and use a `Content-Type` of `application/json`.
-The token is returned by the `GET` method below (as `csrf_token`), and stays the same as long as `api.admin_password` and `api.listen_port` do.
+`work_update_seconds` is in seconds. `reward_sharing` is `require` for pooled-only mining, `prefer` for pooled mining with solo fallback, or `never` for explicit full solo mining.
+
+The `GET` response reports whether an RPC password is set through `rpcpassword_set` and omits the password itself. A successful `POST` response echoes the submitted JSON fields, including `rpcpassword` if supplied. Do not log or share unredacted configuration request or response bodies; remove passwords and other sensitive fields first.
+
+A `POST` request must additionally send the anti-CSRF token in an `X-DATUM-CSRF` header and use a `Content-Type` of `application/json`.
+The token is returned by the `GET` method below (as `csrf_token`). It is generated randomly at Gateway startup, independently of `api.admin_password` and `api.listen_port`, and changes on each restart. After a restart, fetch the new token with `GET /v1/configuration` before sending further `POST` requests.
 
 `GET` method
 
-```
+```json
 {
   "pool_address": "bc1...",
   "miner_username_behavior": {
@@ -199,7 +261,7 @@ The token is returned by the `GET` method below (as `csrf_token`), and stays the
 
 `POST` method
 
-```
+```json
 {
   "pool_address": "bc1...",
   "miner_username_behavior": {

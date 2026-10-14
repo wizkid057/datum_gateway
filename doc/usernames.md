@@ -73,14 +73,14 @@ Example:
         }
     }
 
-This example defines three username modifiers, each named "modifier name 1" and so on, with differnent proportions.
+This example defines three username modifiers, each named "modifier name 1" and so on, with different proportions.
 The first redirects approximately 20% (`0.2`) of shares to "bitcoin address A", and 80% (`0.8`) to the address specified in the Stratum username (which is specified as simply `""`).
 Similarly, the second defines a 50/50 split.
 The third redirects 1% to "bitcoin address C", and 99% to "bitcoin address D"; note that the Stratum username's address does not receive *any* shares in that scenario.
 
 To make use of a modifier, you must append a tilde (`~`) and the modifier name to your Stratum username.
 For example, you might use "bitcoin address E.workername~modifier name 2".
-This would send 20% of shares to the pool as username "bitcoin address A.workername" and 80% as "bitcoin address E.workername".
+This would send approximately 50% of shares to the pool as username "bitcoin address B.workername" and 50% as "bitcoin address E.workername".
 Regardless of what Bitcoin address is being used by a modifier, the worker name (if any) specified by the Stratum username is copied over as-is.
 
 Be aware that this feature reassigns share submissions based on the proof-of-work hash.

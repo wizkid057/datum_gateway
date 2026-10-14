@@ -1,0 +1,11 @@
+Maintainers: DO NOT MODIFY THIS FILE. Its SHA-256 hash is timestamped on the Bitcoin blockchain. See documentation.
+
+---
+
+The original and only official DATUM Gateway repository is OCEAN-xyz/datum_gateway at https://github.com/OCEAN-xyz/datum_gateway
+
+Official DATUM supports Bitcoin only, using Bitcoin’s consensus rules and SHA-256d proof of work.
+
+DATUM (including the DATUM Gateway, DATUM Prime, and the DATUM Protocol) was originally written by Jason Hughes for the OCEAN Bitcoin Mining Pool.
+
+DATUM Gateway was released under the MIT open-source license in October 2024.
