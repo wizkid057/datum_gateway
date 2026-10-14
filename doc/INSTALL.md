@@ -115,7 +115,9 @@ The [DATUM box installer project](https://github.com/OCEAN-xyz/preseed-debian) p
 
 **The installer automatically selects the largest disk and repartitions it, erasing existing data.** Use it on a dedicated machine with that disk intended for installation, and back up any data you need before booting the image.
 
-Follow the installer project's first-login instructions, including changing the initial password. After installation, review the [package configuration](#oceans-debian-packages), [Node Configuration](#node-configuration), and [Usage](#usage), allow Bitcoin Core to fully sync, and complete the [verification checklist](#verify-it-is-working) before connecting the rest of your miners.
+The default username is `box` and the password is `datumbox`. You will be prompted to change the password on first login; follow the installer project's first-login instructions.
+
+After installation, review the [package configuration](#oceans-debian-packages), [Node Configuration](#node-configuration), and [Usage](#usage), allow Bitcoin Core to fully sync, and complete the [verification checklist](#verify-it-is-working) before connecting the rest of your miners.
 
 ### Building from source
 
