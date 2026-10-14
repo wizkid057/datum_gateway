@@ -6,6 +6,7 @@ The defaults are intended to be sane starting points, but they are not always th
 
 - [Sizing share difficulty](#sizing-share-difficulty)
 - [Large farms and multiple Gateways](#large-farms-and-multiple-gateways)
+- [Open file limits](#open-file-limits)
 - [Local LAN bandwidth and stale work](#local-lan-bandwidth-and-stale-work)
 - [How DATUM distributes work](#how-datum-distributes-work)
 - [Sites with limited bandwidth](#sites-with-limited-bandwidth)
@@ -63,7 +64,7 @@ The default configuration allows **1,024 simultaneous Stratum clients**. Size th
 | `stratum.max_threads` | 8 | Maximum number of Stratum server threads. |
 | `stratum.max_clients_per_thread` | 128 | Maximum clients handled by each thread. |
 
-`max_clients` must be no greater than `max_threads × max_clients_per_thread`; the Gateway rejects configurations that exceed that capacity. Raising only `max_clients` is therefore insufficient with the default thread settings. The current build limits are 64 threads and 4,096 clients per thread; these are implementation limits, not recommended operating targets.
+`max_clients` must be no greater than `max_threads × max_clients_per_thread`; the Gateway rejects configurations that exceed that capacity. Raising only `max_clients` is therefore insufficient with the default thread settings. The process also needs [an open file limit above the client count](#open-file-limits). The current build limits are 64 threads and 4,096 clients per thread; these are implementation limits, not recommended operating targets.
 
 For example, to allow 2,048 clients with eight threads, merge this into your existing `stratum` section:
 
@@ -82,6 +83,39 @@ Restart the Gateway after changing these settings. Allow room for reconnects and
 If you split the farm across several Gateways, assign a distinct `mining.coinbase_unique_id` to each instance using the same coinbase tags. Use values from **1 to 65535**; the default is `4242`. For example, set `1001` on the first Gateway and `1002` on the second. The ID is included in the coinbase transaction to help keep work distinct between instances, including during full solo mining or solo fallback. Do not clone an instance's configuration to another Gateway without updating this ID.
 
 Divide your site-wide share-rate budget among the Gateways, and verify each one's pool connection, reward address, and clients separately. Each instance needs working RPC access and new-block notifications. If using HTTP notifications, arrange for the Bitcoin node to notify every Gateway that depends on it.
+
+### Open file limits
+
+Each connected miner uses a socket, which counts as an open file descriptor. The operating system's **per-process soft open file limit** (`RLIMIT_NOFILE`) must be higher than `stratum.max_clients`, with headroom for listening sockets, pool and RPC connections, dashboard connections, logs, and other descriptors. All Gateway threads share this limit; adding threads does not multiply it. A limit of `1024` is therefore insufficient for `1024` miners.
+
+The Gateway warns at startup when `max_clients` exceeds the soft or hard limit, but does not raise either automatically. Running out of descriptors can produce `accept failed: Too many open files` before reaching the configured client limit. Check both the Gateway connection settings above and the process limits when increasing capacity.
+
+For a systemd service, inspect the configured limits and create an override:
+
+```bash
+sudo systemctl show datum-gateway -p LimitNOFILE -p LimitNOFILESoft
+sudo systemctl edit datum-gateway
+```
+
+Add this to the override, choosing a value above your planned maximum client count:
+
+```ini
+[Service]
+LimitNOFILE=65535
+```
+
+A single `LimitNOFILE` value sets both soft and hard limits. Apply it, then inspect the running process's `Max open files` line on Linux:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart datum-gateway
+gateway_pid=$(systemctl show datum-gateway -p MainPID --value)
+sudo cat "/proc/${gateway_pid}/limits"
+```
+
+Use `datum_gateway` instead of `datum-gateway` for the [source-build service example](INSTALL.md#systemd-service-for-source-builds), which already sets `LimitNOFILE=65535`.
+
+For a foreground source build, check the shell's soft and hard limits with `ulimit -Sn` and `ulimit -Hn`. If the hard limit permits it, run `ulimit -Sn 65535` in the same shell before launching the Gateway. Raising the hard limit requires administrator configuration. Shell limits do not change an existing systemd service's limits. Raising file limits also does not raise `stratum.max_clients` or its thread capacity; configure both for the farm's size.
 
 ## Local LAN bandwidth and stale work
 

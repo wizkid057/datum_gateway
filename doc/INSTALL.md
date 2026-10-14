@@ -6,7 +6,10 @@ Choose an installation method, configure your Bitcoin Core node, then configure 
 
 - [Requirements](#requirements)
 - [OCEAN's Debian packages](#oceans-debian-packages)
+- [Debian's official package](#debians-official-package)
+- [DATUM box installer image](#datum-box-installer-image)
 - [Building from source](#building-from-source)
+- [Systemd service for source builds](#systemd-service-for-source-builds)
 - [Node configuration](#node-configuration)
 - [Gateway usage](#usage)
 - [Pooled solo mining setup (recommended)](#pooled-solo-mining-setup-recommended)
@@ -39,7 +42,7 @@ The following external libraries are required (installed automatically with OCEA
  - libsodium
 
 ## Installation
-Install DATUM Gateway using [OCEAN's Debian packages](#oceans-debian-packages), [build it from source](#building-from-source), or use [Docker](#docker). You also need [Bitcoin Core](https://bitcoincore.org/en/download/), fully synced with the Bitcoin network. OCEAN's repository provides both packages. Full node setup and synchronization instructions are beyond the scope of this document.
+Install DATUM Gateway using [OCEAN's Debian packages](#oceans-debian-packages), [Debian's official package](#debians-official-package), [build it from source](#building-from-source), or use [Docker](#docker). For a dedicated machine, the [DATUM box installer image](#datum-box-installer-image) installs Debian, Bitcoin Core, and DATUM Gateway together. You also need [Bitcoin Core](https://bitcoincore.org/en/download/), fully synced with the Bitcoin network. OCEAN's repository provides both packages. Full node setup and synchronization instructions are beyond the scope of this document.
 
 After installation, complete [Node Configuration](#node-configuration) to enable RPC, reserve coinbase space, and arrange new-block notifications, then continue to [Usage](#usage).
 
@@ -77,13 +80,42 @@ sudo apt update
 sudo apt install datum-gateway bitcoin-core
 ```
 
-Complete the package configuration prompts, including your Bitcoin reward address. The packaged Gateway uses `/etc/datum-gateway/datum_gateway_config.json` and the `datum-gateway` service; Bitcoin Core's configuration is `/etc/bitcoin/bitcoin.conf`. Review [Node Configuration](#node-configuration) and [Usage](#usage), and allow Bitcoin Core to fully sync before mining. After editing the Gateway configuration, restart it with:
+Complete the package configuration prompts, including your Bitcoin reward address. Debian's default `debconf` priority is `high`, so installation may skip less urgent settings. To review all configuration prompts, use `dpkg-reconfigure`, which defaults to `low` priority:
+
+```bash
+sudo dpkg-reconfigure bitcoin-core datum-gateway
+```
+
+This lets you configure both packages interactively and restarts the affected services. The packaged Gateway uses `/etc/datum-gateway/datum_gateway_config.json` and the `datum-gateway` service; Bitcoin Core's configuration is `/etc/bitcoin/bitcoin.conf`. Review [Node Configuration](#node-configuration) and [Usage](#usage), and allow Bitcoin Core to fully sync before mining. You can also edit the configuration files directly; after editing the Gateway configuration, restart it with:
 
 ```bash
 sudo systemctl restart datum-gateway
 ```
 
 Package installation includes the runtime dependencies; you can skip the source-build instructions below.
+
+### Debian's official package
+
+DATUM Gateway is also available in Debian's own repositories. Check the [Debian package tracker](https://tracker.debian.org/pkg/datum-gateway) for current versions and supported suites and architectures. These packages follow Debian's release and update schedule, so their version may differ from OCEAN's repository or the latest upstream release.
+
+On Debian Trixie, after [enabling trixie-backports](https://backports.debian.org/Instructions/), install the Gateway with:
+
+```bash
+sudo apt update
+sudo apt install -t trixie-backports datum-gateway
+```
+
+On a Debian suite that includes the package directly, use `sudo apt install datum-gateway`. The Debian package installs runtime dependencies and a `datum-gateway` service, with configuration at `/etc/datum-gateway/datum_gateway_config.json`. Review its prompts with `sudo dpkg-reconfigure datum-gateway`.
+
+Install and configure Bitcoin Core separately, then complete [Node Configuration](#node-configuration) and [Usage](#usage). The Gateway needs your node's RPC URL and either a readable RPC cookie or matching RPC credentials. The two-package `dpkg-reconfigure bitcoin-core datum-gateway` command above applies when both packages are installed from OCEAN's repository.
+
+### DATUM box installer image
+
+The [DATUM box installer project](https://github.com/OCEAN-xyz/preseed-debian) provides an automated Debian Trixie installer that installs Bitcoin Core and DATUM Gateway from OCEAN's APT repository. Download an image for your machine's architecture from its [releases](https://github.com/OCEAN-xyz/preseed-debian/releases), or follow the project's instructions to build an image with your reward address and SSH public key configured.
+
+**The installer automatically selects the largest disk and repartitions it, erasing existing data.** Use it on a dedicated machine with that disk intended for installation, and back up any data you need before booting the image.
+
+Follow the installer project's first-login instructions, including changing the initial password. After installation, review the [package configuration](#oceans-debian-packages), [Node Configuration](#node-configuration), and [Usage](#usage), allow Bitcoin Core to fully sync, and complete the [verification checklist](#verify-it-is-working) before connecting the rest of your miners.
 
 ### Building from source
 
@@ -131,6 +163,83 @@ cmake --build .
 ```
 
 The executable is `./datum_gateway`. Continue with [Node Configuration](#node-configuration) and [Usage](#usage); the source-build examples below assume you are in this repository directory.
+
+#### Separate build directory and installation prefix
+
+Alternatively, keep build files in a separate directory and install the executable and documentation under a chosen prefix. From the cloned repository root, with CMake 3.15 or later:
+
+```bash
+cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/opt/datum_gateway
+cmake --build build
+sudo cmake --install build
+```
+
+The executable is then `/opt/datum_gateway/bin/datum_gateway`. Replace `/opt/datum_gateway` with your preferred installation prefix; `sudo` is needed only when installing to a directory your user cannot write. Installation does not create a configuration file or service. For a foreground run, copy and edit the example as described under [Usage](#usage), then run from the repository root:
+
+```bash
+/opt/datum_gateway/bin/datum_gateway -c datum_gateway_config.json
+```
+
+For automatic startup, use the service example below.
+
+### Systemd service for source builds
+
+On a Linux system using systemd, this example runs a source build installed under `/opt/datum_gateway`. It assumes your Bitcoin Core node already runs as user and group `bitcoin`; replace both with your node's actual user and group. Running as the node's user permits local RPC cookie access and the `killall -USR1 datum_gateway` block notification described under [Node Configuration](#node-configuration).
+
+From the repository root, create a private configuration directory and copy the example for a new installation. If you already have a configuration file, use that file instead of overwriting it with the example:
+
+```bash
+sudo install -d -o bitcoin -g bitcoin -m 0750 /etc/datum-gateway
+sudo install -o bitcoin -g bitcoin -m 0600 doc/example_datum_gateway_config.json /etc/datum-gateway/datum_gateway_config.json
+sudoedit /etc/datum-gateway/datum_gateway_config.json
+```
+
+Complete [Node Configuration](#node-configuration) and your chosen mining setup under [Usage](#usage) before starting the service. Set your reward address, RPC authentication, coinbase tags, and a secure admin password. Use an absolute path for `bitcoind.rpccookiefile` when using cookie authentication, and ensure the service user can read it. Keep `logger.log_to_console` enabled to send logs to the journal.
+
+Create `/etc/systemd/system/datum_gateway.service` with the following contents, adjusting `User`, `Group`, and the executable path to match your installation:
+
+```ini
+[Unit]
+Description=DATUM Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bitcoin
+Group=bitcoin
+ExecStart=/opt/datum_gateway/bin/datum_gateway -c /etc/datum-gateway/datum_gateway_config.json
+WorkingDirectory=/var/lib/datum-gateway
+StateDirectory=datum-gateway
+StateDirectoryMode=0750
+UMask=0077
+Restart=on-failure
+RestartSec=30
+TimeoutSec=600
+LimitNOFILE=65535
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/etc/datum-gateway
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Systemd creates `/var/lib/datum-gateway` for the service user. The configuration directory remains writable so dashboard changes can be saved when `api.modify_conf` is enabled; its ownership and permissions above allow the Gateway to create and rename the replacement configuration file. Home directories remain readable for a node's RPC cookie. If you enable file logging, use an absolute path under `/var/lib/datum-gateway`, or explicitly allow another log directory in the unit and make it writable by the service user.
+
+Enable the service and check its status and logs:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now datum_gateway
+sudo systemctl status datum_gateway --no-pager
+sudo journalctl -u datum_gateway -n 100 --no-pager
+```
+
+After editing the configuration or installing a new build, apply the change with `sudo systemctl restart datum_gateway`, then complete the [verification checklist](#verify-it-is-working). This source-build service uses the name `datum_gateway`; Debian packages use `datum-gateway`. Use the service name that matches your installation in the status, restart, and journal commands elsewhere in this guide. Run only one Gateway instance on a given set of listening ports.
 
 ## Node Configuration
 

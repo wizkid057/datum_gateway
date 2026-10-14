@@ -61,7 +61,8 @@ Stale-share improvements depend on node connectivity, notification speed, hardwa
 See [INSTALL.md](doc/INSTALL.md) for requirements, installation, and configuration:
 
 - [Install OCEAN's Debian packages](doc/INSTALL.md#oceans-debian-packages) for Debian Trixie on amd64, including Bitcoin Core.
-- [Build from source](doc/INSTALL.md#building-from-source) or [run with Docker](doc/INSTALL.md#docker).
+- [Install Debian's official package](doc/INSTALL.md#debians-official-package), or use the [DATUM box installer image](doc/INSTALL.md#datum-box-installer-image) for a dedicated machine.
+- [Build from source](doc/INSTALL.md#building-from-source), optionally [install under a custom prefix](doc/INSTALL.md#separate-build-directory-and-installation-prefix) and [run as a systemd service](doc/INSTALL.md#systemd-service-for-source-builds), or [run with Docker](doc/INSTALL.md#docker).
 - [Configure Bitcoin Core](doc/INSTALL.md#node-configuration) and [DATUM Gateway](doc/INSTALL.md#usage).
 - [Set up pooled solo mining with shared rewards](doc/INSTALL.md#pooled-solo-mining-setup-recommended).
 - [Set up full solo mining without a pool](doc/INSTALL.md#solo-mining-setup-no-pool).
