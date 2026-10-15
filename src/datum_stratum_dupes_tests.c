@@ -132,10 +132,12 @@ static void datum_dupe_table_prune_tests(void) {
 	const int saved_clients = datum_config.stratum_v1_max_clients_per_thread;
 	const int saved_shares = datum_config.stratum_v1_vardiff_target_shares_min;
 	const int saved_stale = datum_config.stratum_v1_share_stale_seconds;
+	const int saved_work_update = datum_config.bitcoind_work_update_seconds;
 
 	datum_config.stratum_v1_max_clients_per_thread = 1;
 	datum_config.stratum_v1_vardiff_target_shares_min = 1;
-	datum_config.stratum_v1_share_stale_seconds = 60;
+	datum_config.stratum_v1_share_stale_seconds = 120;
+	datum_config.bitcoind_work_update_seconds = 40;
 
 	T_DATUM_STRATUM_THREADPOOL_DATA * const thread_data = calloc(1, sizeof(*thread_data));
 	datum_test(thread_data != NULL);
@@ -143,15 +145,15 @@ static void datum_dupe_table_prune_tests(void) {
 	datum_stratum_dupes_init(thread_data);
 	T_DATUM_STRATUM_DUPES * const dupes = thread_data->dupes;
 
-	// Job 1 is current, job 2 is old enough for its shares to age out. A real gateway has
-	// both at once: the jobs it is handing out now, and the ones from a few minutes ago.
+	// Job 1 is older than share_stale_seconds but still within the 160-second acceptance
+	// window. Job 2 is old enough for its shares to age out.
 	T_DATUM_STRATUM_JOB * const fresh = calloc(1, sizeof(*fresh));
 	T_DATUM_STRATUM_JOB * const old = calloc(1, sizeof(*old));
 	T_DATUM_STRATUM_JOB * const saved_fresh = global_cur_stratum_jobs[1];
 	T_DATUM_STRATUM_JOB * const saved_old = global_cur_stratum_jobs[2];
 	datum_test(fresh != NULL && old != NULL);
 	if (!fresh || !old) { free(fresh); free(old); free(thread_data); return; }
-	fresh->tsms = current_time_millis();
+	fresh->tsms = current_time_millis() - 130000;
 	old->tsms = current_time_millis() - 600000;
 	global_cur_stratum_jobs[1] = fresh;
 	global_cur_stratum_jobs[2] = old;
@@ -170,6 +172,13 @@ static void datum_dupe_table_prune_tests(void) {
 		datum_dupe_index_is_sound(dupes);
 	}
 
+	// Cleanup must prune expired records while retaining every still-acceptable share.
+	datum_test(dupes->current_items < 256);
+	for (int i = 0; i < 256; i += 8) {
+		const unsigned int nonce = ((unsigned int)i << 16) | (unsigned int)((i * 11) + 3);
+		datum_test(datum_stratum_check_for_dupe(thread_data, nonce, 1, 2000 + i, 0, extranonce));
+	}
+
 	global_cur_stratum_jobs[1] = saved_fresh;
 	global_cur_stratum_jobs[2] = saved_old;
 	free(dupes->ptr);
@@ -181,6 +190,7 @@ static void datum_dupe_table_prune_tests(void) {
 	datum_config.stratum_v1_max_clients_per_thread = saved_clients;
 	datum_config.stratum_v1_vardiff_target_shares_min = saved_shares;
 	datum_config.stratum_v1_share_stale_seconds = saved_stale;
+	datum_config.bitcoind_work_update_seconds = saved_work_update;
 }
 
 // Many cleanup cycles of both kinds, against the invariant the insert now relies on:
