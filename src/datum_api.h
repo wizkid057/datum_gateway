@@ -73,6 +73,13 @@ bool datum_api_check_admin_password_httponly(struct MHD_Connection * const conne
 struct MHD_Response *datum_api_create_response_authfail_clients();
 #endif
 
+#ifdef DATUM_API_FOR_UMBREL
+void datum_api_var_DATUM_SHARES_ACCEPTED(char *buffer, size_t buffer_size, const T_DATUM_API_DASH_VARS *vardata);
+void datum_api_var_DATUM_SHARES_REJECTED(char *buffer, size_t buffer_size, const T_DATUM_API_DASH_VARS *vardata);
+
+void datum_api_var_STRATUM_JOB_BLOCK_VALUE(char *buffer, size_t buffer_size, const T_DATUM_API_DASH_VARS *vardata);
+#endif
+
 void datum_api_json_modify_new(const char * const category, const char * const key, json_t * const val);
 void *datum_restart_thread(void *ptr);
 bool datum_api_json_write();
