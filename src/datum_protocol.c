@@ -208,19 +208,17 @@ void datum_encrypt_prep_precomp(DATUM_ENC_KEYS *remote, DATUM_ENC_KEYS *local, D
 	}
 }
 
+static void datum_protocol_set_state(unsigned char state) {
+	pthread_mutex_lock(&datum_protocol_sender_stage1_lock);
+	datum_state = state;
+	pthread_mutex_unlock(&datum_protocol_sender_stage1_lock);
+}
+
 // Buffer data to the server.  Raw, already encrypted and part of the protocol.
 int datum_protocol_chars_to_server(unsigned char *s, int len) {
 	if (!len) return 0;
 	pthread_mutex_lock(&datum_protocol_send_buffer_lock);
 	if ((server_out_buf + len) >= DATUM_PROTOCOL_BUFFER_SIZE) {
-		pthread_mutex_unlock(&datum_protocol_send_buffer_lock);
-		return -1;
-	}
-	if (len > (DATUM_PROTOCOL_BUFFER_SIZE-(server_out_buf)-1)) {
-		len = DATUM_PROTOCOL_BUFFER_SIZE-(server_out_buf)-1;
-	}
-	if ((server_out_buf+len) >= DATUM_PROTOCOL_BUFFER_SIZE) {
-		DLOG_ERROR("DATUM Server send overrun!");
 		pthread_mutex_unlock(&datum_protocol_send_buffer_lock);
 		return -1;
 	}
@@ -235,7 +233,7 @@ int datum_protocol_mining_cmd(void *data, int len) {
 	// encypt and send a standard mining sub-command
 	// this can be called from other threads so must be thread safe!
 	T_DATUM_PROTOCOL_HEADER h;
-	int i;
+	const int frame_len = sizeof(T_DATUM_PROTOCOL_HEADER) + len + crypto_box_MACBYTES;
 	
 	memset(&h, 0, sizeof(T_DATUM_PROTOCOL_HEADER));
 	
@@ -248,22 +246,33 @@ int datum_protocol_mining_cmd(void *data, int len) {
 	// we have to lock here for both the header obfuscation and the nonce increment
 	pthread_mutex_lock(&datum_protocol_sender_stage1_lock);
 	
+	if (datum_state != 3) {
+		pthread_mutex_unlock(&datum_protocol_sender_stage1_lock);
+		return -1;
+	}
+
+	pthread_mutex_lock(&datum_protocol_send_buffer_lock);
+	if ((server_out_buf + frame_len) >= DATUM_PROTOCOL_BUFFER_SIZE) {
+		pthread_mutex_unlock(&datum_protocol_send_buffer_lock);
+		pthread_mutex_unlock(&datum_protocol_sender_stage1_lock);
+		DLOG_WARN("DATUM send buffer full, dropping %d byte mining command", frame_len);
+		return -1;
+	}
+	pthread_mutex_unlock(&datum_protocol_send_buffer_lock);
+	
 	crypto_box_easy_afternm(data, data, len, session_nonce_sender, session_precomp.precomp_remote);
 	//DLOG_DEBUG("mining cmd 5--- len %d, send header key %8.8x, raw %8.8lx", h.cmd_len, sending_header_key, (unsigned long)upk_u32le(h, 0));
 	datum_xor_header_key(&h, sending_header_key);
 	sending_header_key = datum_header_xor_feedback(sending_header_key);
 	datum_increment_session_nonce(session_nonce_sender);
 	
-	i = datum_protocol_chars_to_server((unsigned char *)&h, sizeof(T_DATUM_PROTOCOL_HEADER));
-	if (i < 1) {
-		pthread_mutex_unlock(&datum_protocol_sender_stage1_lock);
-		return -1;
-	}
-	i = datum_protocol_chars_to_server((unsigned char *)data, len + crypto_box_MACBYTES);
-	if (i < 1) {
-		pthread_mutex_unlock(&datum_protocol_sender_stage1_lock);
-		return -1;
-	}
+	// header and body go in together
+	pthread_mutex_lock(&datum_protocol_send_buffer_lock);
+	memcpy(&server_send_buffer[server_out_buf], &h, sizeof(T_DATUM_PROTOCOL_HEADER));
+	server_out_buf += sizeof(T_DATUM_PROTOCOL_HEADER);
+	memcpy(&server_send_buffer[server_out_buf], data, len + crypto_box_MACBYTES);
+	server_out_buf += len + crypto_box_MACBYTES;
+	pthread_mutex_unlock(&datum_protocol_send_buffer_lock);
 	pthread_mutex_unlock(&datum_protocol_sender_stage1_lock);
 	
 	return 0;
@@ -357,7 +366,10 @@ int datum_protocol_coinbaser_fetch(void *sptr) {
 	pthread_mutex_lock(&datum_protocol_coinbaser_fetch_mutex);
 	datum_coinbaser_v2_response = NULL;
 
-	datum_protocol_mining_cmd(msg, i);
+	if (datum_protocol_mining_cmd(msg, i) != 0) {
+		pthread_mutex_unlock(&datum_protocol_coinbaser_fetch_mutex);
+		return 0;
+	}
 
 	clock_gettime(CLOCK_REALTIME, &ts);
 	ts.tv_sec += 5; // Set timeout to 5 seconds
@@ -458,7 +470,7 @@ err:
 	DLOG_DEBUG("DATUM Pool Prime ID:         %8.8lx", (unsigned long)datum_config.prime_id);
 	DLOG_DEBUG("DATUM Pool Min Diff:         %"PRIu64,datum_config.override_vardiff_min);
 	
-	datum_state = 3; // fully ready to make work
+	datum_protocol_set_state(3); // fully ready to make work
 	
 	return 1;
 }
@@ -1241,7 +1253,7 @@ int datum_protocol_handshake_response(T_DATUM_PROTOCOL_HEADER *h, unsigned char 
 	session_remote_datum_keys.is_remote = true;
 	
 	datum_encrypt_prep_precomp(&session_remote_datum_keys, &session_datum_keys, &session_precomp);
-	datum_state = 2; //we're handshaked with encryption setup!
+	datum_protocol_set_state(2); //we're handshaked with encryption setup!
 	
 	DLOG_DEBUG("Handshake response received.");
 	DLOG_INFO("DATUM Server MOTD: %s", motd);
@@ -1389,6 +1401,7 @@ int datum_protocol_pow_submit(
 	pow.ntime = upk_u32le(block_header, 68);
 	pow.nonce = upk_u32le(block_header, 76);
 	pow.version = upk_u32le(block_header, 0);
+	pow.prime_id = job->prime_id;
 	
 	//DLOG_DEBUG("ADD: DATUM POW: time %d nonce %8.8X", pow.ntime, pow.nonce);
 	
@@ -1403,12 +1416,22 @@ int datum_protocol_pow(void *arg) {
 	unsigned char msg[32768 + crypto_box_MACBYTES];
 	int i = 0, j;
 	bool w=false;
+	bool sent_merkle = false, sent_coinbase = false;
 	// this is called when processing queued shares in our thread
 	//DLOG_DEBUG("DATUM POW @ %p: time %d nonce %8.8X", pow, pow->ntime, pow->nonce);
 	
 	if ((pow->coinbase_id > 7) && (!(pow->coinbase_id == 0xff) && pow->subsidy_only)) {
 		DLOG_ERROR("Could not process POW to DATUM server! Bad coinbase ID.");
 		return 0;
+	}
+	
+	// Only submit work generated for the current connection. Work tagged with another
+	// connection's UID would just be rejected by the server.
+	if (pow->prime_id != datum_config.prime_id) {
+		if (!pow->is_block) {
+			DLOG_DEBUG("Dropping POW from connection UID %8.8lx, current is %8.8lx", (unsigned long)pow->prime_id, (unsigned long)datum_config.prime_id);
+			return 0;
+		}
 	}
 	
 	msg[0] = 0x27; i++; // submit POW
@@ -1479,6 +1502,7 @@ int datum_protocol_pow(void *arg) {
 		pthread_rwlock_wrlock(&datum_jobs_rwlock);
 		w = true;
 		datum_jobs[pow->datum_job_id].server_has_merkle_branches = true;
+		sent_merkle = true;
 	}
 	
 	if (pow->subsidy_only) {
@@ -1499,6 +1523,7 @@ int datum_protocol_pow(void *arg) {
 			}
 			
 			datum_jobs[pow->datum_job_id].server_has_coinbase_empty = true;
+			sent_coinbase = true;
 		}
 	} else {
 		if (!datum_jobs[pow->datum_job_id].server_has_coinbase[pow->coinbase_id]) {
@@ -1518,6 +1543,7 @@ int datum_protocol_pow(void *arg) {
 			}
 			
 			datum_jobs[pow->datum_job_id].server_has_coinbase[pow->coinbase_id] = true;
+			sent_coinbase = true;
 		}
 	}
 	
@@ -1532,7 +1558,24 @@ int datum_protocol_pow(void *arg) {
 	memset(&msg[i], rand(), j);
 	i+=j;
 	
-	datum_protocol_mining_cmd(msg, i);
+	if (datum_protocol_mining_cmd(msg, i) != 0) {
+		// the server never got this share, so it doesn't have the job data we included with it either
+		if (sent_merkle || sent_coinbase) {
+			pthread_rwlock_wrlock(&datum_jobs_rwlock);
+			if (sent_merkle) {
+				datum_jobs[pow->datum_job_id].server_has_merkle_branches = false;
+			}
+			if (sent_coinbase) {
+				if (pow->subsidy_only) {
+					datum_jobs[pow->datum_job_id].server_has_coinbase_empty = false;
+				} else {
+					datum_jobs[pow->datum_job_id].server_has_coinbase[pow->coinbase_id] = false;
+				}
+			}
+			pthread_rwlock_unlock(&datum_jobs_rwlock);
+		}
+		return 0;
+	}
 	if ((datum_protocol_mainloop_tsms - datum_last_accepted_share_local_tsms) > 25000) {
 		// we don't want to trigger a connection timeout just because we are mining very slowly...
 		// so we'll fake this in that case.
@@ -1582,14 +1625,17 @@ void *datum_protocol_client(void *args) {
 		}
 	}
 	pthread_rwlock_unlock(&datum_jobs_rwlock);
+	// reset the session under the stage1 lock too, so no sender can interleave with it
+	pthread_mutex_lock(&datum_protocol_sender_stage1_lock);
 	pthread_mutex_lock(&datum_protocol_send_buffer_lock);
 	sending_header_key = 0xDC871829;
 	receiving_header_key = 0;
 	protocol_state = 0;
 	server_out_buf = 0;
 	server_in_buf = 0;
-	pthread_mutex_unlock(&datum_protocol_send_buffer_lock);
 	datum_state = 0;
+	pthread_mutex_unlock(&datum_protocol_send_buffer_lock);
+	pthread_mutex_unlock(&datum_protocol_sender_stage1_lock);
 	memset(&s_header, 0, sizeof(T_DATUM_PROTOCOL_HEADER));
 	
 	// Note: The pool can not set a LOWER vardiff minimum than the client has set, so this is safe to use for that calculation.
@@ -1717,8 +1763,10 @@ void *datum_protocol_client(void *args) {
 			}
 		}
 		
-		// Queue up sends for PoW submissions
-		datum_protocol_pow_queue_submits();
+		// Queue up sends for PoW submissions but only once the handshake is complete.
+		if (datum_state >= 3) {
+			datum_protocol_pow_queue_submits();
+		}
 		
 		pthread_mutex_lock(&datum_protocol_send_buffer_lock);
 		if (server_out_buf) {
@@ -1753,7 +1801,7 @@ void *datum_protocol_client(void *args) {
 					break_again = true;
 					break;
 				}
-				datum_state = 1;
+				datum_protocol_set_state(1);
 				break;
 			}
 			
@@ -1949,6 +1997,7 @@ void *datum_protocol_client(void *args) {
 	DLOG_DEBUG("DATUM Protocol Thread is exiting.");
 	close(sockfd);
 	close(epollfd);
+	datum_protocol_set_state(0);
 	datum_protocol_client_active = 0;
 	datum_queue_free(&pow_queue);
 	
